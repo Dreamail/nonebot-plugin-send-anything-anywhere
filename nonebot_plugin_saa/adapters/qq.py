@@ -162,7 +162,7 @@ try:
             assert event.id
 
             if isinstance(event, (C2CMessageCreateEvent, GroupAtMessageCreateEvent)):
-                reply = False # qq doesnt support reply in group or c2c at this time
+                reply = False  # qq doesnt support reply in group or c2c at this time
 
             full_msg = assamble_message_factory(
                 msg,
