@@ -7,7 +7,8 @@ from nonebot import get_adapter
 from pytest_mock import MockerFixture
 from nonebot.adapters.qq import Bot, Adapter
 from nonebot.adapters.qq.config import BotInfo
-from nonebot.adapters.qq.models import DMS, User, Guild, Channel, Message
+from nonebot.adapters.qq.models import DMS, Guild, Channel, Message
+from nonebot.adapters.qq.models import User as GuildUser
 
 from nonebot_plugin_saa.utils import SupportedAdapters
 
@@ -37,7 +38,7 @@ MockChannel = partial(
     speak_permission=0,
 )
 MockMessage = partial(
-    Message, id="1", channel_id="2233", guild_id="1", author=User(id="1")
+    Message, id="1", channel_id="2233", guild_id="1", author=GuildUser(id="1")
 )
 
 assert_qqguild = partial(
@@ -247,8 +248,9 @@ async def test_list_targets(app: App, mocker: MockerFixture):
         assert bot is get_bot(target)
 
 
-def test_extract_target(app: App):
-    from nonebot.adapters.qq.models import Author
+async def test_extract_target(app: App):
+    from nonebot import get_driver, on_message
+    from nonebot.adapters.qq.models import FriendAuthor, GroupMemberAuthor
     from nonebot.adapters.qq import (
         EventType,
         MessageCreateEvent,
@@ -258,8 +260,8 @@ def test_extract_target(app: App):
     )
 
     from nonebot_plugin_saa import (
-        TargetQQGroup,
-        TargetQQPrivate,
+        TargetQQGroupOpenId,
+        TargetQQPrivateOpenId,
         TargetQQGuildDirect,
         TargetQQGuildChannel,
         extract_target,
@@ -270,7 +272,7 @@ def test_extract_target(app: App):
         id="1",
         channel_id="6677",
         guild_id="5566",
-        author=User(id="1"),
+        author=GuildUser(id="1"),
     )
     assert extract_target(guild_message_event) == TargetQQGuildChannel(channel_id=6677)
 
@@ -279,30 +281,53 @@ def test_extract_target(app: App):
         id="1",
         channel_id="6677",
         guild_id="5566",
-        author=User(id="1"),
+        author=GuildUser(id="1"),
     )
 
     assert extract_target(direct_message_event) == TargetQQGuildDirect(
         recipient_id=1, source_guild_id=5566
     )
 
-    c2c_message_event = C2CMessageCreateEvent(
-        __type__=EventType.C2C_MESSAGE_CREATE,
-        id="1",
-        author=Author(id="3344"),
-        content="test",
-        timestamp="12345678",
-    )
+    c2c_matcher = on_message()
+    @c2c_matcher.handle()
+    async def _(bot: Bot, event: C2CMessageCreateEvent):
+        assert extract_target(event, bot) == TargetQQPrivateOpenId(user_openid="3344", bot_id="test")
 
-    assert extract_target(c2c_message_event) == TargetQQPrivate(user_id=3344)
+    async with app.test_matcher(c2c_matcher) as ctx:
+        qq_adapter = get_driver()._adapters[SupportedAdapters.qq]
+        bot = ctx.create_bot(
+            base=Bot,
+            adapter=qq_adapter,
+            bot_info=BotInfo(id="3344", token="", secret=""),
+        )
+        c2c_message_event = C2CMessageCreateEvent(
+            __type__=EventType.C2C_MESSAGE_CREATE,
+            id="1",
+            author=FriendAuthor(user_openid="3344"),
+            content="test",
+            timestamp="12345678",
+        )
+        ctx.receive_event(bot, c2c_message_event)
 
-    group_at_message_event = GroupAtMessageCreateEvent(
-        __type__=EventType.GROUP_AT_MESSAGE_CREATE,
-        id="1",
-        author=Author(id="3344"),
-        group_id="1122",
-        content="test",
-        timestamp="12345678",
-    )
 
-    assert extract_target(group_at_message_event) == TargetQQGroup(group_id=1122)
+    group_matcher = on_message()
+    @group_matcher.handle()
+    async def _(bot: Bot, event: GroupAtMessageCreateEvent):
+        assert extract_target(event, bot) == TargetQQGroupOpenId(group_openid="1122", bot_id="test")
+
+    async with app.test_matcher(group_matcher) as ctx:
+        qq_adapter = get_driver()._adapters[SupportedAdapters.qq]
+        bot = ctx.create_bot(
+            base=Bot,
+            adapter=qq_adapter,
+            bot_info=BotInfo(id="3344", token="", secret=""),
+        )
+        group_at_message_event = GroupAtMessageCreateEvent(
+            __type__=EventType.GROUP_AT_MESSAGE_CREATE,
+            id="1",
+            author=GroupMemberAuthor(member_openid="3344"),
+            group_openid="1122",
+            content="test",
+            timestamp="12345678",
+        )
+        ctx.receive_event(bot, group_at_message_event)
